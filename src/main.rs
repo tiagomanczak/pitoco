@@ -11,7 +11,9 @@
 #![no_main]
 
 use hal::rtc::{DayOfWeek, RealTimeClock};
+use menu::*;
 use rp2040_hal::rtc::DateTime;
+
 // The macro for our start-up function
 use rp_pico::{
     entry,
@@ -43,64 +45,23 @@ use core::fmt::Write;
 use embedded_hal::{adc::OneShot, digital::v2::OutputPin};
 use heapless::String;
 
-const PREFIX: &[u8] = b"\n\rpitoco>>";
-
-struct Pitoco<'a> {
-    buffer: &'a mut [u8; 64],
-    index: usize,
-}
-enum PitocoCommand {
-    LedOn,
-    LedOff,
-    Temperature,
-    DateTime,
-    Unknown,
-}
-
-impl<'a> Pitoco<'a> {
-    fn new(buffer: &'a mut [u8; 64]) -> Pitoco {
-        Pitoco {
-            buffer: buffer,
-            index: 0,
-        }
-    }
-
-    fn rcv(&mut self, byte: u8) -> Option<PitocoCommand> {
-        if byte == 13 {
-            return self.parse_cmd();
-        }
-
-        self.rcv_u8(byte);
-
-        None
-    }
-
-    fn rcv_u8(&mut self, byte: u8) {
-        if let Some(buf_byte) = self.buffer.get_mut(self.index) {
-            *buf_byte = byte;
-        } else {
-            panic!("Overload");
-        }
-        self.index += 1;
-    }
-
-    fn parse_cmd(&mut self) -> Option<PitocoCommand> {
-        let mut return_comand: Option<PitocoCommand> = None;
-
-        if let Some(str_cmd) = core::str::from_utf8(&self.buffer[..self.index]).ok() {
-            return_comand = match str_cmd {
-                "led on" => Some(PitocoCommand::LedOn),
-                "led off" => Some(PitocoCommand::LedOff),
-                "temp" => Some(PitocoCommand::Temperature),
-                "datetime" => Some(PitocoCommand::DateTime),
-                _ => Some(PitocoCommand::Unknown),
-            }
-        }
-        self.index = 0;
-        return_comand
-    }
-}
-
+// CLI Root Menu Struct Initialization
+const ROOT_MENU: Menu<SerialPort<'_, dyn UsbBus>> = Menu {
+    label: "root",
+    items: &[&Item {
+        item_type: ItemType::Callback {
+            function: hello_name,
+            parameters: &[Parameter::Mandatory {
+                parameter_name: "name",
+                help: Some("Enter your name"),
+            }],
+        },
+        command: "hw",
+        help: Some("This is an embedded CLI terminal. Check the summary for the list of supported commands"),
+    }],
+    entry: None,
+    exit: None,
+};
 /// Entry point to our bare-metal application.
 ///
 /// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
@@ -192,8 +153,11 @@ fn main() -> ! {
         .build();
 
     let mut greetins_done = false;
-    let mut cmd_rcv_buf: [u8; 64] = [0; 64];
-    let mut pitoco = Pitoco::new(&mut cmd_rcv_buf);
+
+    // Create a buffer to store CLI input
+    let mut clibuf = [0u8; 64];
+    // Instantiate CLI runner with root menu, buffer, and uart
+    let mut r = Runner::new(ROOT_MENU, &mut clibuf, &serial);
 
     loop {
         //in case the usb channel is closed return to the previous state
@@ -201,103 +165,33 @@ fn main() -> ! {
         // A welcome message at the beginning
         let interval = Instant::from_ticks(4_000_000);
 
-        if timer.get_counter() > interval && !greetins_done {
-            let _ = serial.write(b"Hello, World!\n");
-            greetins_done = true;
-            let time = timer.get_counter();
-            let mut text: String<64> = String::new();
-            writeln!(&mut text, "Current timer ticks: {}", time).unwrap();
-
-            // This only works reliably because the number of bytes written to
-            // the serial port is smaller than the buffers available to the USB
-            // peripheral. In general, the return value should be handled, so that
-            // bytes not transferred yet don't get lost.
-            let _ = serial.write(text.as_bytes());
-        }
-
         // Check for new data
 
         if usb_dev.poll(&mut [&mut serial]) {
-            let mut buf = [0u8; 64];
-
-            match serial.read(&mut buf) {
-                Err(_e) => {}
-                Ok(0) => {}
-                Ok(count) => {
-                    //echo the data back so the user see what it is typing in the terminal
-                    let _ = serial.write(&buf[..count]);
-
-                    //to debug we see the number of bytes and the char each loop
-                    #[cfg(feature = "debug")]
-                    {
-                        let mut text: String<64> = String::new();
-                        writeln!(&mut text, "Count: {} Char: {}", count, buf[0]).unwrap();
-                        let _ = serial.write(text.as_bytes());
-                    }
-
-                    if let Some(cmd) = pitoco.rcv(buf[0]) {
-                        match cmd {
-                            PitocoCommand::LedOn => {
-                                let _ = serial.write(b"\nLedOn");
-                                led_pin.set_high().unwrap();
-                            }
-                            PitocoCommand::LedOff => {
-                                let _ = serial.write(b"\nLedOff");
-                                led_pin.set_low().unwrap();
-                            }
-                            PitocoCommand::Temperature => {
-                                let temp: u16 = adc.read(&mut temperature_sensor).unwrap();
-                                let mut text: String<11> = String::new();
-                                writeln!(&mut text, "\nTemp: {}", temp).unwrap();
-                                let _ = serial.write(text.as_bytes());
-                            }
-                            PitocoCommand::DateTime => {
-                                let _ = serial.write(b"\n\rDateTime");
-                                let now = rtc.now().unwrap();
-                                let mut text: String<20> = String::new();
-                                text.clear();
-                                writeln!(
-                                    &mut text,
-                                    "\n\rTime: {}:{}:{}",
-                                    now.hour, now.minute, now.second
-                                )
-                                .unwrap();
-                                let _ = serial.write(text.as_bytes());
-                                text.clear();
-                                writeln!(
-                                    &mut text,
-                                    "\n\rDate: {}-{}-{}",
-                                    now.year, now.month, now.day
-                                )
-                                .unwrap();
-                                let _ = serial.write(text.as_bytes());
-                                text.clear();
-                            }
-                            PitocoCommand::Unknown => {
-                                let _ = serial.write(b"\nUnknown Command");
-                            }
-                        }
-                        let _ = serial.write(PREFIX);
-
-                        //in case od debug we see the content of the pitoco buffer
-                        #[cfg(feature = "debug")]
-                        {
-                            let mut wr_ptr = &pitoco.buffer[..pitoco.index];
-                            while !wr_ptr.is_empty() {
-                                match serial.write(wr_ptr) {
-                                    Ok(len) => wr_ptr = &wr_ptr[len..],
-                                    // On error, just drop unwritten data.
-                                    // One possible error is Err(WouldBlock), meaning the USB
-                                    // write buffer is full.
-                                    Err(_) => break,
-                                };
-                            }
-                        }
-                    }
-                }
+            // Create single element buffer for UART characters
+            let mut buf = [0_u8; 1];
+            // Read single byte from UART
+            if serial.read(&mut buf).unwrap() != 0 {
+                // Pass read byte to CLI runner for processing
+                r.input_byte(buf[0]);
             }
         }
     }
 }
 
+// Callback function for hw commans
+fn hello_name<'a>(
+    _menu: &Menu<SerialPort<'_, dyn UsbBus>>,
+    item: &Item<SerialPort<'_, dyn UsbBus>>,
+    args: &[&str],
+    context: &mut SerialPort<'_, dyn UsbBus>,
+) {
+    // Print to console passed "name" argument
+    writeln!(
+        context,
+        "Hello, {}!",
+        argument_finder(item, args, "name").unwrap().unwrap()
+    )
+    .unwrap();
+}
 // End of file

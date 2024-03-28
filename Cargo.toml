@@ -21,6 +21,7 @@ usb-device = "0.2.9"
 usbd-hid = "0.5.2"
 usbd-serial = { version = "0.1.1" }
 heapless = "0.7.16"
+menu = "0.4.0"
 
 # this lets you use `cargo fix`!
 [[bin]]
