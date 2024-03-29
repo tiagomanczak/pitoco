@@ -41,9 +41,27 @@ use usb_device::{class_prelude::*, prelude::*};
 use usbd_serial::SerialPort;
 
 // Used to demonstrate writing formatted strings
-use core::fmt::Write;
+use core::{borrow::BorrowMut, fmt::Write};
 use embedded_hal::{adc::OneShot, digital::v2::OutputPin};
 use heapless::String;
+
+struct UsbSerialWrapper<'a> {
+    serial: &SerialPort<'a>,
+}
+
+// Define your custom type
+struct MyType {
+    data: String,
+}
+
+// Implement the Write trait for your custom type
+impl fmt::Write for MyType {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        // Append the string `s` to the internal data of your custom type
+        self.data.push_str(s);
+        Ok(())
+    }
+}
 
 // CLI Root Menu Struct Initialization
 const ROOT_MENU: Menu<SerialPort<'_, dyn UsbBus>> = Menu {
