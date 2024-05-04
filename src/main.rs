@@ -40,11 +40,11 @@ use usbd_serial::SerialPort;
 
 // Used to demonstrate writing formatted strings
 use core::fmt::Write;
-use embedded_hal::{adc::OneShot, digital::v2::OutputPin};
+
 use heapless::String;
 
 mod pitoco;
-use pitoco::{Pitoco, PitocoCommand, PREFIX};
+use pitoco::Pitoco;
 /// Entry point to our bare-metal application.
 ///
 /// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
@@ -62,9 +62,9 @@ fn main() -> ! {
 
     let sio = Sio::new(pac.SIO);
 
-    let mut adc = Adc::new(pac.ADC, &mut pac.RESETS);
+    let adc = Adc::new(pac.ADC, &mut pac.RESETS);
 
-    let mut temperature_sensor = adc.take_temp_sensor().unwrap();
+    //let mut temperature_sensor = adc.take_temp_sensor().unwrap();
 
     // Configure the clocks
     //
@@ -102,7 +102,11 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    let mut led_pin = pins.gpio28.into_push_pull_output();
+    let led_pin = pins.gpio28.into_push_pull_output();
+
+    let mut cmd_rcv_buf: [u8; 64] = [0; 64];
+    let mut text: String<128> = String::new();
+    let mut pitoco = Pitoco::new(&mut cmd_rcv_buf, rtc, led_pin, adc);
 
     #[cfg(feature = "rp2040-e5")]
     {
@@ -136,8 +140,6 @@ fn main() -> ! {
         .build();
 
     let mut greetins_done = false;
-    let mut cmd_rcv_buf: [u8; 64] = [0; 64];
-    let mut pitoco = Pitoco::new(&mut cmd_rcv_buf);
 
     loop {
         //in case the usb channel is closed return to the previous state
@@ -150,7 +152,7 @@ fn main() -> ! {
             greetins_done = true;
             let time = timer.get_counter();
             let mut text: String<64> = String::new();
-            writeln!(&mut text, "Current timer ticks: {}", time).unwrap();
+            let _ = writeln!(&mut text, "Current timer ticks: {}", time);
 
             // This only works reliably because the number of bytes written to
             // the serial port is smaller than the buffers available to the USB
@@ -174,68 +176,23 @@ fn main() -> ! {
                     //to debug we see the number of bytes and the char each loop
                     #[cfg(feature = "debug")]
                     {
-                        let mut text: String<64> = String::new();
                         writeln!(&mut text, "Count: {} Char: {}", count, buf[0]).unwrap();
                         let _ = serial.write(text.as_bytes());
                     }
 
-                    if let Some(cmd) = pitoco.rcv(buf[0]) {
-                        match cmd {
-                            PitocoCommand::LedOn => {
-                                let _ = serial.write(b"\nLedOn");
-                                led_pin.set_high().unwrap();
-                            }
-                            PitocoCommand::LedOff => {
-                                let _ = serial.write(b"\nLedOff");
-                                led_pin.set_low().unwrap();
-                            }
-                            PitocoCommand::Temperature => {
-                                let temp: u16 = adc.read(&mut temperature_sensor).unwrap();
-                                let mut text: String<11> = String::new();
-                                writeln!(&mut text, "\nTemp: {}", temp).unwrap();
-                                let _ = serial.write(text.as_bytes());
-                            }
-                            PitocoCommand::DateTime => {
-                                let _ = serial.write(b"\n\rDateTime");
-                                let now = rtc.now().unwrap();
-                                let mut text: String<20> = String::new();
-                                text.clear();
-                                writeln!(
-                                    &mut text,
-                                    "\n\rTime: {}:{}:{}",
-                                    now.hour, now.minute, now.second
-                                )
-                                .unwrap();
-                                let _ = serial.write(text.as_bytes());
-                                text.clear();
-                                writeln!(
-                                    &mut text,
-                                    "\n\rDate: {}-{}-{}",
-                                    now.year, now.month, now.day
-                                )
-                                .unwrap();
-                                let _ = serial.write(text.as_bytes());
-                                text.clear();
-                            }
-                            PitocoCommand::Unknown => {
-                                let _ = serial.write(b"\nUnknown Command");
-                            }
-                        }
-                        let _ = serial.write(PREFIX);
-
-                        //in case od debug we see the content of the pitoco buffer
-                        #[cfg(feature = "debug")]
-                        {
-                            let mut wr_ptr = &pitoco.buffer[..pitoco.index];
-                            while !wr_ptr.is_empty() {
-                                match serial.write(wr_ptr) {
-                                    Ok(len) => wr_ptr = &wr_ptr[len..],
-                                    // On error, just drop unwritten data.
-                                    // One possible error is Err(WouldBlock), meaning the USB
-                                    // write buffer is full.
-                                    Err(_) => break,
-                                };
-                            }
+                    pitoco.process(buf[0], &mut text).unwrap();
+                    //in case od debug we see the content of the pitoco buffer
+                    #[cfg(feature = "debug")]
+                    {
+                        let mut wr_ptr = &pitoco.buffer[..pitoco.index];
+                        while !wr_ptr.is_empty() {
+                            match serial.write(wr_ptr) {
+                                Ok(len) => wr_ptr = &wr_ptr[len..],
+                                // On error, just drop unwritten data.
+                                // One possible error is Err(WouldBlock), meaning the USB
+                                // write buffer is full.
+                                Err(_) => break,
+                            };
                         }
                     }
                 }
