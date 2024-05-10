@@ -13,6 +13,7 @@
 use hal::rtc::{DayOfWeek, RealTimeClock};
 use menu::*;
 use rp2040_hal::rtc::DateTime;
+use core::fmt;
 
 // The macro for our start-up function
 use rp_pico::{
@@ -45,23 +46,23 @@ use core::{borrow::BorrowMut, fmt::Write};
 use embedded_hal::{adc::OneShot, digital::v2::OutputPin};
 use heapless::String;
 
-struct UsbSerialWrapper<'a> {
-    serial: &SerialPort<'a>,
-}
+// struct UsbSerialWrapper<'a> {
+//     serial: &'a SerialPort<'a, B>,
+// }
 
-// Define your custom type
-struct MyType {
-    data: String,
-}
+// // Define your custom type
+// struct MyType<N> {
+//     data: String<N>,
+// }
 
-// Implement the Write trait for your custom type
-impl fmt::Write for MyType {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        // Append the string `s` to the internal data of your custom type
-        self.data.push_str(s);
-        Ok(())
-    }
-}
+// // Implement the Write trait for your custom type
+// impl fmt::Write for MyType {
+//     fn write_str(&mut self, s: &str) -> fmt::Result {
+//         // Append the string `s` to the internal data of your custom type
+//         self.data.push_str(s);
+//         Ok(())
+//     }
+// }
 
 // CLI Root Menu Struct Initialization
 const ROOT_MENU: Menu<SerialPort<'_, dyn UsbBus>> = Menu {
@@ -175,7 +176,7 @@ fn main() -> ! {
     // Create a buffer to store CLI input
     let mut clibuf = [0u8; 64];
     // Instantiate CLI runner with root menu, buffer, and uart
-    let mut r = Runner::new(ROOT_MENU, &mut clibuf, &serial);
+    let mut runner = Runner::new(ROOT_MENU, &mut clibuf, &serial);
 
     loop {
         //in case the usb channel is closed return to the previous state
@@ -191,7 +192,7 @@ fn main() -> ! {
             // Read single byte from UART
             if serial.read(&mut buf).unwrap() != 0 {
                 // Pass read byte to CLI runner for processing
-                r.input_byte(buf[0]);
+                runner.input_byte(buf[0]);
             }
         }
     }
