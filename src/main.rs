@@ -65,7 +65,7 @@ use heapless::String;
 // }
 
 // CLI Root Menu Struct Initialization
-const ROOT_MENU: Menu<SerialPort<'_, dyn UsbBus>> = Menu {
+const ROOT_MENU: Menu<Output<U, B>> = Menu {
     label: "root",
     items: &[&Item {
         item_type: ItemType::Callback {
@@ -81,6 +81,21 @@ const ROOT_MENU: Menu<SerialPort<'_, dyn UsbBus>> = Menu {
     entry: None,
     exit: None,
 };
+
+#[derive(Default)]
+struct Context {
+}
+
+struct Output<'a, U: usb_device::bus::UsbBus, B: core::borrow::BorrowMut<[u8]>>(SerialPort<'a, U, B>);
+
+impl<'a, U: usb_device::bus::UsbBus, B: core::borrow::BorrowMut<[u8]>> Write for Output<'a, U, B> {
+    fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
+        let _written = self.0.write(s.as_bytes()).unwrap();
+        Ok(())
+    }
+}
+
+
 /// Entry point to our bare-metal application.
 ///
 /// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
@@ -176,7 +191,7 @@ fn main() -> ! {
     // Create a buffer to store CLI input
     let mut clibuf = [0u8; 64];
     // Instantiate CLI runner with root menu, buffer, and uart
-    let mut runner = Runner::new(ROOT_MENU, &mut clibuf, &serial);
+    let mut runner = Runner::new(ROOT_MENU, &mut clibuf, Output(serial));
 
     loop {
         //in case the usb channel is closed return to the previous state
